@@ -2,7 +2,7 @@
   "info": {
     "name": "Task Manager — API-тесты",
     "_postman_id": "a9bb69fe-7766-494d-b7d1-053395b89029",
-    "description": "Автоматические проверки регистрации и JWT, команд и ролей, задач, прав доступа, версий и истории изменений, комментариев, Redis-кеша и аналитики. Запускайте всю коллекцию через Postman Runner с первого запроса: сценарии зависят друг от друга и создают тестовые данные в MySQL.",
+    "description": "Проверки регистрации, JWT, ролей, задач, истории, комментариев, Redis, аналитики и Rate Limiting. Запуск: вся коллекция в Runner, 1 итерация, Delay 100 ms. Создаёт тестовые данные в MySQL.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -7672,6 +7672,108 @@
                   "const b = pm.response.json();",
                   "pm.test(\"Доступ admin восстановлен\", function () { pm.expect(b.tasks_by_status.done).to.eql(5); pm.expect(b.comments_count).to.eql(7); });",
                   "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "09 — Rate Limiting",
+      "item": [
+        {
+          "name": "Burst: 429 и Retry-After",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/healthz",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Healthz: HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const target = pm.variables.replaceIn(\"{{base_url}}\").replace(/\\/$/, \"\") + \"/api/v1/teams\";",
+                  "const responses = [];",
+                  "const errors = [];",
+                  "let pending = 40;",
+                  "for (let i = 0; i < 40; i++) {",
+                  "  pm.sendRequest({ url: target, method: \"GET\" }, (err, res) => {",
+                  "    if (err || !res) errors.push(String(err || \"no response\"));",
+                  "    else responses.push(res);",
+                  "    if (--pending !== 0) return;",
+                  "    pm.test(\"Burst: все запросы выполнены\", () => pm.expect(errors).to.be.empty);",
+                  "    const limited = responses.find(r => r.code === 429);",
+                  "    pm.test(\"Превышение квоты: HTTP 429\", () => pm.expect(limited).to.exist);",
+                  "    pm.test(\"429: JSON и Retry-After\", () => {",
+                  "      pm.expect(limited).to.exist;",
+                  "      pm.expect(limited.json().error.code).to.eql(\"rate_limit_exceeded\");",
+                  "      pm.expect(Number(limited.headers.get(\"Retry-After\"))).to.be.at.least(1);",
+                  "    });",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Healthz доступен после burst",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/healthz",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Healthz: HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Квота восстановилась",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/teams",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 2500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"После восстановления квоты: HTTP 401 без JWT\", () => pm.response.to.have.status(401));"
                 ]
               }
             }

@@ -10,6 +10,16 @@ info:
      Для защищённых эндпоинтов требуется Bearer JWT.
      Даты передаются в формате RFC 3339.
 
+     Общий Token Bucket на IP из RemoteAddr применяется перед mux и JWT.
+     По умолчанию RATE_LIMIT_RPS=10 и RATE_LIMIT_BURST=20; значения настраиваются.
+     Допущенный запрос расходует токен независимо от результата JWT или обработчика.
+     Точный путь /healthz исключён из лимитирования.
+     При исчерпании квоты ответ 429 имеет приоритет над JWT, 404 и 405.
+     X-Forwarded-For и Forwarded не учитываются; клиенты за NAT или прокси делят квоту.
+     Состояние хранится в памяти процесса и сбрасывается при перезапуске.
+     Неактивные bucket удаляются после 10 минут, только если полностью восстановились.
+     Очистка выполняется при лимитируемых запросах не чаще раза в минуту.
+
 servers:
   - url: "http://127.0.0.1:8080"
     description: "Адрес по умолчанию. Порт задаётся HTTP_PORT в Compose, адрес локального Go-процесса — HTTP_ADDR."
@@ -90,6 +100,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge16KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/login":
@@ -128,6 +140,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge16KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/teams":
@@ -156,6 +170,8 @@ paths:
                   created_at: "2026-10-30T05:00:00Z"
         "401":
           "$ref": "#/components/responses/Unauthorized"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
     post:
@@ -196,6 +212,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge16KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/teams/{id}/invite":
@@ -244,6 +262,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge16KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/teams/{id}/members/{user_id}":
@@ -291,6 +311,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge16KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
     delete:
@@ -312,6 +334,8 @@ paths:
           "$ref": "#/components/responses/MemberNotFound"
         "409":
           "$ref": "#/components/responses/AssignedTasks"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/tasks":
@@ -359,6 +383,8 @@ paths:
           "$ref": "#/components/responses/Forbidden"
         "404":
           "$ref": "#/components/responses/TeamNotFound"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
     post:
@@ -414,6 +440,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge512KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/tasks/{id}":
@@ -474,6 +502,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge512KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/tasks/{id}/history":
@@ -526,6 +556,8 @@ paths:
           "$ref": "#/components/responses/Forbidden"
         "404":
           "$ref": "#/components/responses/TaskNotFound"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/tasks/{id}/comments":
@@ -561,6 +593,8 @@ paths:
           "$ref": "#/components/responses/Forbidden"
         "404":
           "$ref": "#/components/responses/TaskNotFound"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
     post:
@@ -606,6 +640,8 @@ paths:
           "$ref": "#/components/responses/BodyTooLarge512KiB"
         "415":
           "$ref": "#/components/responses/UnsupportedMediaType"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
   "/api/v1/teams/{team_id}/stats":
@@ -647,6 +683,8 @@ paths:
           "$ref": "#/components/responses/Forbidden"
         "404":
           "$ref": "#/components/responses/TeamNotFound"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "500":
           "$ref": "#/components/responses/InternalError"
 components:
@@ -657,6 +695,12 @@ components:
       bearerFormat: "JWT"
       description: "Один заголовок Authorization: Bearer <JWT>. Проверяются подпись HS256, exp, issuer, audience, issued-at и положительный user ID в sub. Права определяются текущим членством в MySQL."
   headers:
+    RetryAfter:
+      description: "Ожидание следующего токена в целых секундах, округлённое вверх, минимум 1. Конкурентные запросы могут вновь израсходовать квоту."
+      schema:
+        type: "integer"
+        minimum: 1
+        example: 1
     NoStore:
       description: "JSON-ответы API не должны кешироваться клиентом или посредником."
       schema:
@@ -961,6 +1005,21 @@ components:
             error:
               code: "unsupported_media_type"
               message: "Content-Type must be application/json"
+    RateLimited:
+      description: "429 rate_limit_exceeded: исчерпана общая квота IP. Возвращается до проверки JWT, параметров и тела запроса; /healthz исключён."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+        Retry-After:
+          "$ref": "#/components/headers/RetryAfter"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "rate_limit_exceeded"
+              message: "too many requests"
     InternalError:
       description: "500 internal_error: внутренняя ошибка; детали БД клиенту не возвращаются."
       headers:
@@ -1053,6 +1112,7 @@ components:
                 - "task_not_found"
                 - "version_conflict"
                 - "internal_error"
+                - "rate_limit_exceeded"
             message:
               type: "string"
               description: "Сообщение сервера на английском языке. Текст invalid_input зависит от причины; он может включать контекст операции."

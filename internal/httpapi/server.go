@@ -31,7 +31,7 @@ func NewServer(cfg config.Config, authHandler *auth.Handler, teamHandler *teams.
 
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           mux,
+		Handler:           newRateLimiter(mux, cfg.RateLimitRPS, cfg.RateLimitBurst),
 		ErrorLog:          slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,

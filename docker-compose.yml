@@ -14,6 +14,8 @@ services:
       HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:-60s}
       SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-10}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to at least 32 random bytes in .env}
       JWT_ISSUER: ${JWT_ISSUER:-task-manager}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-task-manager-api}

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,54 @@ func TestLoadRejectsMissingOrShortJWTSecret(t *testing.T) {
 	}
 }
 
+func TestLoadRateLimitDefaults(t *testing.T) {
+	setValidLoadEnvironment(t)
+	for _, name := range []string{"RATE_LIMIT_RPS", "RATE_LIMIT_BURST"} {
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.RateLimitRPS != 10 || cfg.RateLimitBurst != 20 {
+		t.Fatalf("rate limit = (%d, %d); want (10, 20)", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	}
+}
+
+func TestLoadRateLimitConfiguration(t *testing.T) {
+	setValidLoadEnvironment(t)
+	t.Setenv("RATE_LIMIT_RPS", "3")
+	t.Setenv("RATE_LIMIT_BURST", "7")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.RateLimitRPS != 3 || cfg.RateLimitBurst != 7 {
+		t.Fatalf("rate limit = (%d, %d); want (3, 7)", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	}
+
+	for _, name := range []string{"RATE_LIMIT_RPS", "RATE_LIMIT_BURST"} {
+		for _, value := range []string{"", "0", "-1", "1.5", "NaN", "Inf", "invalid", "999999999999999999999999999"} {
+			t.Run(name+"="+value, func(t *testing.T) {
+				t.Setenv(name, value)
+				cfg, err := Load()
+				if err == nil || err.Error() != name+" must be an integer >= 1" {
+					t.Fatalf("error = %v; want validation error for %s", err, name)
+				}
+
+				if cfg != (Config{}) {
+					t.Fatal("Load returned partial configuration on error")
+				}
+			})
+		}
+	}
+}
+
 func setValidLoadEnvironment(t *testing.T) {
 	t.Helper()
 	defaults := map[string]string{
@@ -40,6 +89,7 @@ func setValidLoadEnvironment(t *testing.T) {
 		"MYSQL_CONN_MAX_IDLE_TIME": "1m", "REDIS_CONNECT_TIMEOUT": "3s", "REDIS_READ_TIMEOUT": "2s",
 		"REDIS_WRITE_TIMEOUT": "2s", "REDIS_PING_TIMEOUT": "5s", "MYSQL_MAX_OPEN_CONNS": "10",
 		"MYSQL_MAX_IDLE_CONNS": "5", "REDIS_DB": "0",
+		"RATE_LIMIT_RPS": "10", "RATE_LIMIT_BURST": "20",
 	}
 	for name, value := range defaults {
 		t.Setenv(name, value)

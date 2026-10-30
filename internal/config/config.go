@@ -18,6 +18,8 @@ type Config struct {
 	IdleTimeout       time.Duration
 	ShutdownTimeout   time.Duration
 	LogLevel          slog.Level
+	RateLimitRPS      int
+	RateLimitBurst    int
 	MySQL             MySQLConfig
 	Redis             RedisConfig
 	Auth              AuthConfig
@@ -181,6 +183,8 @@ func loadIntegers(cfg *Config) error {
 		{"MYSQL_MAX_IDLE_CONNS", "5", 0, &cfg.MySQL.MaxIdleConns},
 		{"REDIS_DB", "0", 0, &cfg.Redis.DB},
 		{"BCRYPT_COST", "12", 4, &cfg.Auth.BcryptCost},
+		{"RATE_LIMIT_RPS", "10", 1, &cfg.RateLimitRPS},
+		{"RATE_LIMIT_BURST", "20", 1, &cfg.RateLimitBurst},
 	}
 	for _, integer := range integers {
 		value, err := strconv.Atoi(envOrDefault(integer.name, integer.fallback))
