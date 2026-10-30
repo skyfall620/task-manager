@@ -54,6 +54,8 @@ type ListFilter struct {
 	AssigneeID *uint64
 	Limit      int
 	Offset     int
+	Cursor     *listCursor
+	cursorMode bool // cursorMode includes one lookahead row for the HTTP response.
 }
 
 type UpdateInput struct {

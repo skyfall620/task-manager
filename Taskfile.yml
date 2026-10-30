@@ -17,6 +17,7 @@ tasks:
       - task: lint
       - task: vet
       - task: test
+      - task: test:race
       - task: build
       - git diff --check
 
@@ -39,6 +40,12 @@ tasks:
     desc: Run unit tests
     cmds:
       - go test ./...
+
+  test:race:
+    desc: Run tests with the race detector
+    cmds:
+      - go test -race ./internal/httpapi ./internal/config
+      - go test -race ./internal/tasks
 
   build:
     desc: Build Go packages

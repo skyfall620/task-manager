@@ -162,6 +162,101 @@ func TestRepositoryIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("cursor-pagination", func(t *testing.T) {
+		ctx, fixture := taskFixture(t, db)
+		service := NewService(NewRepository(db))
+		var created []Task
+		for range 5 {
+			task, err := service.Create(ctx, fixture.owner, CreateInput{TeamID: fixture.team, Title: "Cursor task", AssigneeID: &fixture.assignee})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			created = append(created, task)
+		}
+
+		for _, input := range []CreateInput{
+			{TeamID: fixture.team, Title: "Excluded status", Status: StatusDone},
+			{TeamID: fixture.otherTeam, Title: "Other team", AssigneeID: &fixture.assignee},
+		} {
+			if _, err := service.Create(ctx, fixture.owner, input); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		boundary := time.Date(2020, 1, 1, 0, 0, 0, 123456000, time.UTC)
+		if _, err := db.ExecContext(ctx, "UPDATE tasks SET created_at = ? WHERE team_id = ?", boundary, fixture.team); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := db.ExecContext(ctx, "UPDATE tasks SET created_at = ? WHERE id = ?", boundary.Add(-time.Microsecond), created[4].ID); err != nil {
+			t.Fatal(err)
+		}
+
+		filter := ListFilter{TeamID: fixture.team, Status: StatusTodo, AssigneeID: &fixture.assignee, Limit: 2, cursorMode: true}
+		var seen []uint64
+		for pageNumber := 0; ; pageNumber++ {
+			rows, err := service.List(ctx, fixture.owner, filter)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			hasMore := len(rows) > filter.Limit
+			if hasMore {
+				rows = rows[:filter.Limit]
+			}
+
+			for _, task := range rows {
+				if task.TeamID != fixture.team || task.Status != StatusTodo || task.AssigneeID == nil || *task.AssigneeID != fixture.assignee {
+					t.Fatal("cursor query lost filters or team scope")
+				}
+
+				seen = append(seen, task.ID)
+			}
+
+			if pageNumber == 0 {
+				if _, err := service.Create(ctx, fixture.owner, CreateInput{TeamID: fixture.team, Title: "Newer task", AssigneeID: &fixture.assignee}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if !hasMore {
+				break
+			}
+
+			if pageNumber >= 5 {
+				t.Fatal("cursor did not advance")
+			}
+
+			filter.Cursor, err = decodeListCursor(encodeListCursor(rows[len(rows)-1]))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if len(seen) != len(created) {
+			t.Fatalf("seen %v; want five original tasks", seen)
+		}
+
+		expected := []uint64{created[3].ID, created[2].ID, created[1].ID, created[0].ID, created[4].ID}
+		for i, id := range seen {
+			if id != expected[i] {
+				t.Fatalf("task skipped, repeated or incorrectly ordered: %v", seen)
+			}
+		}
+
+		legacy := filter
+		legacy.Cursor, legacy.cursorMode, legacy.Offset = nil, false, 1
+		rows, err := service.List(ctx, fixture.owner, legacy)
+		if err != nil || len(rows) != 2 || rows[0].ID != created[3].ID || rows[1].ID != created[2].ID {
+			t.Fatalf("legacy offset pagination changed: %v", err)
+		}
+
+		if _, err := service.List(ctx, fixture.missingUser, filter); !errors.Is(err, ErrTeamNotFound) {
+			t.Fatal("cursor exposed tasks to a non-member")
+		}
+	})
+
 	runUpdateIntegrationTests(t, db)
 	runCommentsIntegrationTests(t, db)
 	runCacheIntegrationTests(t, db)

@@ -163,8 +163,18 @@ func listQuery(filter ListFilter) (string, []any) {
 		args = append(args, *filter.AssigneeID)
 	}
 
-	query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
-	args = append(args, filter.Limit, filter.Offset)
+	if filter.Cursor != nil {
+		query += " AND (created_at < ? OR (created_at = ? AND id < ?))"
+		args = append(args, filter.Cursor.CreatedAt, filter.Cursor.CreatedAt, filter.Cursor.ID)
+	}
+
+	query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+	args = append(args, filter.Limit)
+	if !filter.cursorMode && filter.Cursor == nil {
+		query += " OFFSET ?"
+		args = append(args, filter.Offset)
+	}
+
 	return query, args
 }
 

@@ -2,7 +2,7 @@
   "info": {
     "name": "Task Manager — API-тесты",
     "_postman_id": "a9bb69fe-7766-494d-b7d1-053395b89029",
-    "description": "Проверки регистрации, JWT, ролей, задач, истории, комментариев, Redis, аналитики и Rate Limiting. Запуск: вся коллекция в Runner, 1 итерация, Delay 100 ms. Создаёт тестовые данные в MySQL.",
+    "description": "Проверки регистрации, JWT, ролей, задач, истории, комментариев, Redis, аналитики, Rate Limiting и Cursor Pagination. Запуск: вся коллекция в Runner, 1 итерация, Delay 100 ms. Создаёт тестовые данные в MySQL.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -7781,6 +7781,587 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "10 — Cursor Pagination",
+      "item": [
+        {
+          "name": "Offset=0: исходный список из 8 задач",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=100&offset=0",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  pm.test(\"Offset: 8 задач, JSON-массив\", () => pm.expect(tasks).to.be.an(\"array\").with.lengthOf(8));",
+                  "  pm.test(\"Offset: нет X-Next-Cursor\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.not.exist);",
+                  "  pm.collectionVariables.set(\"cp_all_ids\", JSON.stringify(tasks.map(t => String(t.id))));",
+                  "  pm.collectionVariables.set(\"cp_done_ids\", JSON.stringify(tasks.filter(t => t.status === \"done\").map(t => String(t.id))));",
+                  "  pm.collectionVariables.set(\"cp_assignee_ids\", JSON.stringify(tasks.filter(t => String(t.assignee_id) === pm.collectionVariables.get(\"s4_alice_id\") && t.status === \"done\").map(t => String(t.id))));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Первая страница: limit=3, получен курсор",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=3",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_all_ids\"));",
+                  "  const cursor = pm.response.headers.get(\"X-Next-Cursor\");",
+                  "  pm.test(\"Первая страница: первые 3 задачи\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(0, 3)));",
+                  "  pm.test(\"Продолжение: X-Next-Cursor задан\", () => pm.expect(cursor).to.be.a(\"string\").and.not.empty);",
+                  "  if (cursor) pm.collectionVariables.set(\"cp_cursor_1\", cursor);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Повтор первой страницы: те же данные и курсор",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=3",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_all_ids\"));",
+                  "  pm.test(\"Данные совпадают\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(0, 3)));",
+                  "  pm.test(\"Курсор не изменился\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.eql(pm.collectionVariables.get(\"cp_cursor_1\")));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Вторая страница: по cursor",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=3&cursor={{cp_cursor_1}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_all_ids\"));",
+                  "  const cursor = pm.response.headers.get(\"X-Next-Cursor\");",
+                  "  pm.test(\"Вторая страница: следующие 3, без повторов\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(3, 6)));",
+                  "  pm.test(\"Есть следующая страница\", () => pm.expect(cursor).to.be.a(\"string\").and.not.empty);",
+                  "  if (cursor) pm.collectionVariables.set(\"cp_cursor_2\", cursor);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Последняя страница: без X-Next-Cursor",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=3&cursor={{cp_cursor_2}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_all_ids\"));",
+                  "  pm.test(\"Последняя страница: оставшиеся 2 задачи\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(6)));",
+                  "  pm.test(\"Продолжения больше нет\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.not.exist);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Пустая команда: [] без курсора",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s7_empty_team_id}}&limit=3",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test(\"Пустой JSON-массив\", () => pm.expect(pm.response.json()).to.deep.equal([]));",
+                  "  pm.test(\"Курсор отсутствует\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.not.exist);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Фильтр status=done: первая страница",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&status=done&limit=2",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_done_ids\"));",
+                  "  const cursor = pm.response.headers.get(\"X-Next-Cursor\");",
+                  "  pm.test(\"Первые две done-задачи\", () => { pm.expect(expected).to.have.lengthOf(5); pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(0, 2)); pm.expect(tasks.every(t => t.status === \"done\")).to.eql(true); });",
+                  "  pm.test(\"Есть курсор\", () => pm.expect(cursor).to.be.a(\"string\").and.not.empty);",
+                  "  if (cursor) pm.collectionVariables.set(\"cp_done_cursor_1\", cursor);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Фильтр status=done: вторая страница",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&status=done&limit=2&cursor={{cp_done_cursor_1}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_done_ids\"));",
+                  "  const cursor = pm.response.headers.get(\"X-Next-Cursor\");",
+                  "  pm.test(\"Следующие две done-задачи\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(2, 4)));",
+                  "  pm.test(\"Продолжение есть\", () => pm.expect(cursor).to.be.a(\"string\").and.not.empty);",
+                  "  if (cursor) pm.collectionVariables.set(\"cp_done_cursor_2\", cursor);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Фильтр status=done: последняя страница",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&status=done&limit=2&cursor={{cp_done_cursor_2}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_done_ids\"));",
+                  "  pm.test(\"Последняя done-задача\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(4)));",
+                  "  pm.test(\"Курсор отсутствует\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.not.exist);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Фильтры done + assignee: первая страница",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&status=done&assignee_id={{s4_alice_id}}&limit=1",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_assignee_ids\"));",
+                  "  const cursor = pm.response.headers.get(\"X-Next-Cursor\");",
+                  "  pm.test(\"Первая задача Alice с done\", () => { pm.expect(expected).to.have.lengthOf(2); pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(0, 1)); });",
+                  "  pm.test(\"Есть продолжение\", () => pm.expect(cursor).to.be.a(\"string\").and.not.empty);",
+                  "  if (cursor) pm.collectionVariables.set(\"cp_assignee_cursor_1\", cursor);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Фильтры done + assignee: продолжение",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&status=done&assignee_id={{s4_alice_id}}&limit=1&cursor={{cp_assignee_cursor_1}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_assignee_ids\"));",
+                  "  pm.test(\"Вторая задача Alice с done\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected.slice(1)));",
+                  "  pm.test(\"Курсор больше не нужен\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.not.exist);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "limit=100 без offset: вся страница без курсора",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=100",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const tasks = pm.response.json();",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_all_ids\"));",
+                  "  pm.test(\"Вся выдача совпадает\", () => pm.expect(tasks.map(t => String(t.id))).to.deep.equal(expected));",
+                  "  pm.test(\"Курсор отсутствует\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.not.exist);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "offset=1: прежняя пагинация",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=2&offset=1",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const expected = JSON.parse(pm.collectionVariables.get(\"cp_all_ids\"));",
+                  "  pm.test(\"Offset возвращает вторую и третью задачи\", () => pm.expect(pm.response.json().map(t => String(t.id))).to.deep.equal(expected.slice(1, 3)));",
+                  "  pm.test(\"Нет X-Next-Cursor\", () => pm.expect(pm.response.headers.get(\"X-Next-Cursor\")).to.not.exist);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "cursor вместе с offset=0 → 400",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&limit=3&cursor={{cp_cursor_1}}&offset=0",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test(\"Код ошибки invalid_input\", () => pm.expect(pm.response.json().error.code).to.eql(\"invalid_input\"));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Повреждённый cursor → 400",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&cursor=invalid-cursor",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test(\"Код ошибки invalid_input\", () => pm.expect(pm.response.json().error.code).to.eql(\"invalid_input\"));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Пустой cursor → 400",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks?team_id={{s4_team_a_id}}&cursor=",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{s4_alice_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": []
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test(\"Код ошибки invalid_input\", () => pm.expect(pm.response.json().error.code).to.eql(\"invalid_input\"));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
@@ -7924,6 +8505,46 @@
     {
       "key": "s7_alice_done_id",
       "value": ""
+    },
+    {
+      "key": "cp_all_ids",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cp_done_ids",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cp_assignee_ids",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cp_cursor_1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cp_cursor_2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cp_done_cursor_1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cp_done_cursor_2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cp_assignee_cursor_1",
+      "value": "",
+      "type": "string"
     }
   ],
   "auth": {

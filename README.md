@@ -101,8 +101,12 @@ Content-Type: application/json
 
 ## Документация API
 
+`GET /api/v1/tasks` поддерживает курсорную пагинацию с сортировкой `created_at DESC, id DESC`. Ответ остаётся JSON-массивом. Если есть следующая страница, сервер возвращает заголовок `X-Next-Cursor`, значение которого нужно передать в параметре `cursor`, сохранив фильтры.
+
+Для прежней offset-пагинации явно укажите `offset`. Совместное использование `cursor` и `offset`, а также некорректный курсор возвращают `400 invalid_input`. `limit` — от 1 до 100, по умолчанию 20.
+
 - [Swagger/OpenAPI](docs/openapi.yaml) — описание эндпоинтов, моделей запросов и ответов.
-- [Postman-коллекция](docs/task-manager.postman_collection.json) — автоматические проверки регистрации, авторизации, команд, ролей, задач, истории, комментариев, Redis и аналитики и Rate Limiting..
+- [Postman-коллекция](docs/task-manager.postman_collection.json) — автоматические проверки регистрации, авторизации, команд, ролей, задач, истории, комментариев, Redis, аналитики, Rate Limiting и Cursor Pagination.
 
 Для запуска тестов импортируйте коллекцию в Postman и выполните её целиком через Collection Runner.
 

@@ -140,6 +140,23 @@ func (s *Service) List(ctx context.Context, actorID uint64, filter ListFilter) (
 		return nil, fmt.Errorf("%w: limit must be 1 to 100 and offset must be nonnegative", ErrInvalidInput)
 	}
 
+	if filter.Cursor != nil {
+		if !validListCursor(filter.Cursor) || filter.Offset != 0 {
+			return nil, fmt.Errorf("%w: invalid cursor or cursor with offset", ErrInvalidInput)
+		}
+
+		filter.cursorMode = true
+	}
+
+	if filter.cursorMode {
+		if filter.Offset != 0 {
+			return nil, fmt.Errorf("%w: cursor mode cannot use offset", ErrInvalidInput)
+		}
+
+		// Keep the lookahead row in the cache; the HTTP handler trims it.
+		filter.Limit++
+	}
+
 	entry, err := s.loadCachedList(ctx, actorID, filter)
 	if err != nil {
 		return nil, fmt.Errorf("authorize task list: %w", err)

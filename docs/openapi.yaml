@@ -349,12 +349,17 @@ paths:
         - "$ref": "#/components/parameters/StatusFilter"
         - "$ref": "#/components/parameters/AssigneeFilter"
         - "$ref": "#/components/parameters/Limit"
-        - "$ref": "#/components/parameters/Offset"
-      description: "Для всех участников команды. Порядок: created_at DESC, id DESC. Неизвестные, повторяющиеся и пустые query-параметры отклоняются. Списки кешируются на 5 минут; текущее членство проверяется по MySQL и при попадании в кеш."
+        - "$ref": "#/components/parameters/TaskOffset"
+        - "$ref": "#/components/parameters/Cursor"
+      description: "Для всех участников команды. Порядок created_at DESC, id DESC. Без offset используется курсорный режим с первой страницы. Явный offset (включая 0) включает прежнюю пагинацию без X-Next-Cursor. cursor и offset одновременно запрещены: 400 invalid_input. Неизвестные, повторные и пустые параметры отклоняются. Сохраняйте фильтры между страницами. Курсор не фиксирует снимок данных. Кеш TTL 5 минут; доступ проверяется по MySQL и при cache hit."
       responses:
         "200":
           description: "Страница задач без обёртки и total; при отсутствии — []."
           headers:
+            X-Next-Cursor:
+              description: "Только в курсорном режиме при наличии продолжения. Курсор последней возвращённой задачи; на последней или пустой странице отсутствует."
+              schema:
+                type: "string"
             Cache-Control:
               "$ref": "#/components/headers/NoStore"
           content:
@@ -770,6 +775,22 @@ components:
         minimum: 1
         maximum: 100
         default: 20
+    TaskOffset:
+      name: "offset"
+      in: "query"
+      description: "Явное значение включает offset-пагинацию без X-Next-Cursor, в том числе 0. Не допускается вместе с cursor. Должно помещаться в Go int."
+      schema:
+        type: "integer"
+        minimum: 0
+    Cursor:
+      name: "cursor"
+      in: "query"
+      description: "Непрозрачный URL-safe Base64 без padding по created_at (микросекунды UTC) и uint64 id. Передавайте X-Next-Cursor без изменения с теми же фильтрами. Не допускается вместе с offset; повреждённое или пустое значение даёт 400 invalid_input."
+      schema:
+        type: "string"
+        pattern: "^[A-Za-z0-9_-]{21}[AQgw]$"
+        minLength: 22
+        maxLength: 22
     Offset:
       name: "offset"
       in: "query"

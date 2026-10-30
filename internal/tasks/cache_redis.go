@@ -273,8 +273,17 @@ func (c *RedisListCache) listKey(namespace, generation string, filter ListFilter
 		assignee = strconv.FormatUint(*filter.AssigneeID, 10)
 	}
 
-	return fmt.Sprintf("%s:data:%s:%d:%s:%s:%s:%d:%d", c.prefix, namespace, filter.TeamID,
+	key := fmt.Sprintf("%s:data:%s:%d:%s:%s:%s:%d:%d", c.prefix, namespace, filter.TeamID,
 		generation, status, assignee, filter.Limit, filter.Offset)
+	if filter.Cursor != nil {
+		return key + ":cursor:" + encodeListCursor(Task{ID: filter.Cursor.ID, CreatedAt: filter.Cursor.CreatedAt})
+	}
+
+	if filter.cursorMode {
+		return key + ":cursor:first"
+	}
+
+	return key
 }
 
 func validCachedList(tasks []Task, filter ListFilter) bool {
@@ -282,7 +291,15 @@ func validCachedList(tasks []Task, filter ListFilter) bool {
 		return false
 	}
 
-	for _, task := range tasks {
+	for i, task := range tasks {
+		if filter.Cursor != nil && !taskBeforeCursor(task, filter.Cursor) {
+			return false
+		}
+
+		if (filter.cursorMode || filter.Cursor != nil) && i > 0 && !taskBeforeCursor(task, &listCursor{CreatedAt: tasks[i-1].CreatedAt, ID: tasks[i-1].ID}) {
+			return false
+		}
+
 		if task.ID == 0 || task.TeamID != filter.TeamID || task.Version == 0 || !validStatus(task.Status) {
 			return false
 		}

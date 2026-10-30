@@ -60,6 +60,11 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if filter.cursorMode && len(tasks) > filter.Limit {
+		tasks = tasks[:filter.Limit]
+		w.Header().Set("X-Next-Cursor", encodeListCursor(tasks[len(tasks)-1]))
+	}
+
 	writeJSON(w, r, http.StatusOK, tasks)
 }
 
@@ -69,16 +74,8 @@ func parseListFilter(rawQuery string) (ListFilter, error) {
 		return ListFilter{}, fmt.Errorf("%w: malformed query string", ErrInvalidInput)
 	}
 
-	for key, entries := range values {
-		switch key {
-		case "team_id", "status", "assignee_id", "limit", "offset":
-		default:
-			return ListFilter{}, fmt.Errorf("%w: unsupported query parameter", ErrInvalidInput)
-		}
-
-		if len(entries) != 1 || entries[0] == "" {
-			return ListFilter{}, fmt.Errorf("%w: query parameters must have one nonempty value", ErrInvalidInput)
-		}
+	if err := validateListQuery(values); err != nil {
+		return ListFilter{}, err
 	}
 
 	teamID, err := positiveID(values.Get("team_id"))
@@ -86,7 +83,18 @@ func parseListFilter(rawQuery string) (ListFilter, error) {
 		return ListFilter{}, fmt.Errorf("%w: positive team_id required", ErrInvalidInput)
 	}
 
-	filter := ListFilter{TeamID: teamID, Status: Status(values.Get("status")), Limit: DefaultLimit}
+	filter := ListFilter{TeamID: teamID, Status: Status(values.Get("status")), Limit: DefaultLimit, cursorMode: !values.Has("offset")}
+	if values.Has("cursor") {
+		if values.Has("offset") {
+			return ListFilter{}, fmt.Errorf("%w: cursor and offset cannot be combined", ErrInvalidInput)
+		}
+
+		filter.Cursor, err = decodeListCursor(values.Get("cursor"))
+		if err != nil {
+			return ListFilter{}, err
+		}
+	}
+
 	if values.Has("assignee_id") {
 		id, err := positiveID(values.Get("assignee_id"))
 		if err != nil {
@@ -111,6 +119,22 @@ func parseListFilter(rawQuery string) (ListFilter, error) {
 	}
 
 	return filter, nil
+}
+
+func validateListQuery(values url.Values) error {
+	for key, entries := range values {
+		switch key {
+		case "team_id", "status", "assignee_id", "limit", "offset", "cursor":
+		default:
+			return fmt.Errorf("%w: unsupported query parameter", ErrInvalidInput)
+		}
+
+		if len(entries) != 1 || entries[0] == "" {
+			return fmt.Errorf("%w: query parameters must have one nonempty value", ErrInvalidInput)
+		}
+	}
+
+	return nil
 }
 
 func positiveID(value string) (uint64, error) {

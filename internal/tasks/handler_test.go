@@ -131,7 +131,7 @@ func TestListHTTPFilters(t *testing.T) {
 
 	repository.listResult = nil
 	response = serveAuthenticated(t, 3, handler.List, http.MethodGet, "/api/v1/tasks?team_id=10", "")
-	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != "[]" || repository.lastFilter.Limit != DefaultLimit {
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != "[]" || repository.lastFilter.Limit != DefaultLimit+1 {
 		t.Fatalf("unexpected empty list: %s", response.Body.String())
 	}
 }

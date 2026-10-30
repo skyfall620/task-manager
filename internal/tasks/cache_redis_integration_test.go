@@ -110,6 +110,40 @@ func (h *generationReadPauseHook) ProcessHook(next redis.ProcessHook) redis.Proc
 }
 
 func TestRedisListCacheIntegration(t *testing.T) {
+	t.Run("cursor-pages-and-invalidation", func(t *testing.T) {
+		ctx, cache := redisCacheFixture(t)
+		now := time.Date(2026, 1, 1, 0, 0, 0, 123456000, time.UTC)
+		filter := ListFilter{TeamID: 10, Limit: 3, cursorMode: true, Cursor: &listCursor{CreatedAt: now, ID: 5}}
+		entry := cacheMiss(t, ctx, cache, filter)
+		var rows []Task
+		for _, id := range []uint64{4, 3, 2} {
+			task := cachedTask(10)
+			task.ID, task.CreatedAt = id, now
+			rows = append(rows, task)
+		}
+
+		storeCacheEntry(t, ctx, cache, entry, rows)
+		hit, err := cache.Load(ctx, filter)
+		if err != nil || !hit.Found || len(hit.Tasks) != 3 || hit.Tasks[2].ID != 2 {
+			t.Fatalf("cursor page and lookahead did not round trip: %v", err)
+		}
+
+		other := filter
+		other.Cursor = &listCursor{CreatedAt: now, ID: 3}
+		pending := cacheMiss(t, ctx, cache, other)
+		cacheMiss(t, ctx, cache, ListFilter{TeamID: 10, Limit: 3, cursorMode: true})
+		cacheMiss(t, ctx, cache, ListFilter{TeamID: 10, Limit: 3})
+		if err := cache.Invalidate(ctx, 10); err != nil {
+			t.Fatal(err)
+		}
+
+		storeCacheEntry(t, ctx, cache, pending, []Task{})
+		cacheMiss(t, ctx, cache, filter)
+		cacheMiss(t, ctx, cache, other)
+		if exists, err := cache.client.Exists(ctx, pending.key).Result(); err != nil || exists != 0 {
+			t.Fatal("late cursor page fill survived invalidation")
+		}
+	})
 	t.Run("ttl-empty-list-and-filters", func(t *testing.T) {
 		ctx, cache := redisCacheFixture(t)
 		filter := ListFilter{TeamID: 10, Limit: DefaultLimit}
