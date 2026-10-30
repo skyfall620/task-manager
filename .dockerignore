@@ -1,0 +1,34 @@
+# Git metadata and local environment files at any depth.
+**/.git
+**/.env
+**/.env.*
+
+# Private keys and credential stores at any depth.
+**/*.key
+**/*.p12
+**/*.pfx
+**/private*.pem
+**/*-private.pem
+**/*_private.pem
+**/id_rsa
+**/id_dsa
+**/id_ecdsa
+**/id_ed25519
+**/.ssh
+**/.aws
+**/.netrc
+**/_netrc
+**/credentials.json
+**/application_default_credentials.json
+
+# Build and test outputs.
+bin
+coverage.out
+**/*.test
+
+# Logs and editor temporary files at any depth.
+**/*.log
+**/*.tmp
+**/*.swp
+**/*.swo
+**/*~

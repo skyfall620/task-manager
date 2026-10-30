@@ -1,0 +1,34 @@
+# Local environment files; keep only the root template eligible for tracking.
+.env
+.env.*
+!/.env.example
+
+# Private keys and credential stores.
+*.key
+*.p12
+*.pfx
+private*.pem
+*-private.pem
+*_private.pem
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.ssh/
+.aws/
+.netrc
+_netrc
+credentials.json
+application_default_credentials.json
+
+# Build and test outputs.
+/bin/
+/coverage.out
+*.test
+
+# Logs and editor temporary files.
+*.log
+*.tmp
+*.swp
+*.swo
+*~

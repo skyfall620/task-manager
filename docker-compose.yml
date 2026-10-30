@@ -1,0 +1,88 @@
+services:
+  app:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    environment:
+      HTTP_ADDR: ":8080"
+      HTTP_READ_HEADER_TIMEOUT: ${HTTP_READ_HEADER_TIMEOUT:-5s}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-10s}
+      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-15s}
+      HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:-60s}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to at least 32 random bytes in .env}
+      JWT_ISSUER: ${JWT_ISSUER:-task-manager}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-task-manager-api}
+      JWT_TTL: ${JWT_TTL:-1h}
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+      MYSQL_ADDR: "mysql:3306"
+      MYSQL_USER: ${MYSQL_USER:-task_manager}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-task_manager}
+      MYSQL_CONNECT_TIMEOUT: ${MYSQL_CONNECT_TIMEOUT:-5s}
+      MYSQL_READ_TIMEOUT: ${MYSQL_READ_TIMEOUT:-5s}
+      MYSQL_WRITE_TIMEOUT: ${MYSQL_WRITE_TIMEOUT:-5s}
+      MYSQL_MAX_OPEN_CONNS: ${MYSQL_MAX_OPEN_CONNS:-10}
+      MYSQL_MAX_IDLE_CONNS: ${MYSQL_MAX_IDLE_CONNS:-5}
+      MYSQL_CONN_MAX_LIFETIME: ${MYSQL_CONN_MAX_LIFETIME:-3m}
+      MYSQL_CONN_MAX_IDLE_TIME: ${MYSQL_CONN_MAX_IDLE_TIME:-1m}
+      REDIS_ADDR: "redis:6379"
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_CONNECT_TIMEOUT: ${REDIS_CONNECT_TIMEOUT:-3s}
+      REDIS_READ_TIMEOUT: ${REDIS_READ_TIMEOUT:-2s}
+      REDIS_WRITE_TIMEOUT: ${REDIS_WRITE_TIMEOUT:-2s}
+      REDIS_PING_TIMEOUT: ${REDIS_PING_TIMEOUT:-5s}
+    stop_grace_period: 30s
+
+  mysql:
+    image: mysql:8.4
+    ports: 
+    - "127.0.0.1:3307:3306"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --user="$$MYSQL_USER" --database="$$MYSQL_DATABASE" --execute="SELECT 1" >/dev/null 2>&1'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-task_manager}
+      MYSQL_USER: ${MYSQL_USER:-task_manager}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - -path
+      - /migrations
+      - -database
+      - "mysql://${MYSQL_USER:-task_manager}:${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}@tcp(mysql:3306)/${MYSQL_DATABASE:-task_manager}?multiStatements=true"
+      - up
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1::6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  mysql_data:

@@ -1,0 +1,98 @@
+
+version: "3"
+
+vars:
+  INTEGRATION_TEST_COMMAND: 'go test ./internal/auth ./internal/teams ./internal/tasks ./internal/stats -run ^(TestRepositoryIntegration|TestRedisListCacheIntegration|TestRepositoryCreateRollsBackOnTimestampReadFailure)$ -count=1 -v'
+
+tasks:
+  fmt:
+    desc: Format all Go source files
+    cmds:
+      - gofmt -w .
+
+  check:
+    desc: Format and run all checks
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: vet
+      - task: test
+      - task: build
+      - git diff --check
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  lint:fix:
+    desc: Automatically fix lint issues
+    cmds:
+      - golangci-lint run --fix ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  build:
+    desc: Build Go packages
+    cmds:
+      - go build ./...
+
+  test:integration:
+    desc: Run MySQL and Redis integration tests
+    cmds:
+      - docker compose up -d --wait mysql redis
+      - powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-integration.ps1 -TestCommand "{{.INTEGRATION_TEST_COMMAND}}"
+
+  fix:check:
+    desc: Preview changes from go fix
+    cmds:
+      - go fix -diff ./...
+
+  fix:
+    desc: Apply go fix
+    cmds:
+      - go fix ./...
+
+  up:
+    desc: Start Docker Compose services
+    cmds:
+      - docker compose up -d
+  down:
+   desc: Stop and remove Docker Compose containers and networks
+   cmds:
+     - docker compose down
+
+  rebuild:
+    desc: Rebuild and start Docker Compose services
+    cmds:
+      - docker compose up -d --build
+
+  stop:
+    desc: Stop Docker Compose services
+    cmds:
+      - docker compose stop
+  db:drop:
+    desc: Drop all application tables
+    cmds:
+      - powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/db-down.ps1
+
+  db:create:
+    desc: Create tables using migrations
+    cmds:
+      - docker compose run --rm migrate
+
+  db:clear-for-postman:
+    desc: Reset database and restart application for Postman
+    cmds:
+      - docker compose stop app
+      - task: db:drop
+      - task: db:create
+      - docker compose up -d --build

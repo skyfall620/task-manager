@@ -1,0 +1,1578 @@
+openapi: "3.0.3"
+info:
+  title: "Task Manager REST API"
+  version: "v1"
+  description: |
+     REST API для управления задачами внутри команд.
+     Поддерживает JWT-аутентификацию, роли участников, задачи,
+     историю изменений, комментарии и аналитику.
+
+     Для защищённых эндпоинтов требуется Bearer JWT.
+     Даты передаются в формате RFC 3339.
+
+servers:
+  - url: "http://127.0.0.1:8080"
+    description: "Адрес по умолчанию. Порт задаётся HTTP_PORT в Compose, адрес локального Go-процесса — HTTP_ADDR."
+tags:
+  - name: "Состояние"
+    description: "Проверка HTTP-сервера."
+  - name: "Аутентификация"
+    description: "Регистрация и получение JWT."
+  - name: "Команды"
+    description: "Команды, участники и роли."
+  - name: "Задачи"
+    description: "Создание, списки и обновление задач."
+  - name: "История"
+    description: "История создания и изменений задач."
+  - name: "Комментарии"
+    description: "Добавление и просмотр комментариев."
+  - name: "Аналитика"
+    description: "SQL-отчёт по команде."
+security:
+  - BearerAuth: []
+paths:
+  "/healthz":
+    get:
+      tags:
+        - "Состояние"
+      operationId: "getHealth"
+      summary: "Проверка HTTP-сервера"
+      security: []
+      description: "Проверяет HTTP-сервер без проверки MySQL и Redis. Любой другой метод, включая HEAD, даёт 405 text/plain с Allow: GET; отдельная операция HEAD не объявляется."
+      responses:
+        "200":
+          description: "HTTP-сервер работает."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Health"
+              example:
+                status: "ok"
+  "/api/v1/register":
+    post:
+      tags:
+        - "Аутентификация"
+      operationId: "registerUser"
+      summary: "Регистрация пользователя"
+      security: []
+      description: "Email нормализуется и должен быть уникальным. Пароль хранится в виде bcrypt-хеша."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 16 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/RegisterRequest"
+            example:
+              email: "demo@example.test"
+              password: "DemoOnly-Password-123"
+              name: "Тестовый пользователь"
+      responses:
+        "201":
+          description: "Пользователь создан."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/User"
+              example:
+                id: 1
+                email: "demo@example.test"
+                name: "Тестовый пользователь"
+                created_at: "2026-10-30T05:00:00Z"
+        "400":
+          "$ref": "#/components/responses/InvalidBody"
+        "409":
+          "$ref": "#/components/responses/EmailConflict"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge16KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/login":
+    post:
+      tags:
+        - "Аутентификация"
+      operationId: "loginUser"
+      summary: "Вход и получение JWT"
+      security: []
+      description: "Возвращает JWT зарегистрированному пользователю. Неверные или отсутствующие значения email/password после разбора JSON дают invalid_credentials."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 16 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/LoginRequest"
+            example:
+              email: "demo@example.test"
+              password: "DemoOnly-Password-123"
+      responses:
+        "200":
+          description: "Токен выдан."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/TokenResponse"
+        "400":
+          "$ref": "#/components/responses/InvalidLoginBody"
+        "401":
+          "$ref": "#/components/responses/InvalidCredentials"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge16KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/teams":
+    get:
+      tags:
+        - "Команды"
+      operationId: "listTeams"
+      summary: "Команды текущего пользователя"
+      description: "Только команды, в которых состоит текущий пользователь. Пагинация и фильтры не реализованы; query-параметры игнорируются."
+      responses:
+        "200":
+          description: "Массив команд, при отсутствии — []."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/Team"
+              example:
+                - id: 10
+                  name: "Тестовая команда"
+                  created_by: 1
+                  created_at: "2026-10-30T05:00:00Z"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+    post:
+      tags:
+        - "Команды"
+      operationId: "createTeam"
+      summary: "Создать команду"
+      description: "Любой аутентифицированный пользователь становится owner созданной команды. Создание команды и членства owner атомарно; created_by задаётся сервером."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 16 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/CreateTeamRequest"
+            example:
+              name: "Тестовая команда"
+      responses:
+        "201":
+          description: "Команда создана."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Team"
+              example:
+                id: 10
+                name: "Тестовая команда"
+                created_by: 1
+                created_at: "2026-10-30T05:00:00Z"
+        "400":
+          "$ref": "#/components/responses/InvalidBody"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge16KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/teams/{id}/invite":
+    parameters:
+      - "$ref": "#/components/parameters/TeamPathID"
+    post:
+      tags:
+        - "Команды"
+      operationId: "inviteTeamMember"
+      summary: "Добавить участника по email"
+      description: "Только owner/admin команды. Зарегистрированный пользователь сразу добавляется с ролью member; ссылки и токены приглашения не используются."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 16 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/InviteRequest"
+            example:
+              email: "member@example.test"
+      responses:
+        "201":
+          description: "Участник добавлен."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Member"
+              example:
+                team_id: 10
+                user_id: 2
+                role: "member"
+        "400":
+          "$ref": "#/components/responses/InvalidBody"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/InviteNotFound"
+        "409":
+          "$ref": "#/components/responses/MemberConflict"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge16KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/teams/{id}/members/{user_id}":
+    parameters:
+      - "$ref": "#/components/parameters/TeamPathID"
+      - "$ref": "#/components/parameters/MemberPathID"
+    patch:
+      tags:
+        - "Команды"
+      operationId: "changeMemberRole"
+      summary: "Изменить роль участника"
+      description: "Только owner команды. Разрешены admin и member. Роль создателя/owner менять нельзя; передачи владения нет. Повторная установка текущей роли возвращает 200."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 16 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ChangeRoleRequest"
+            example:
+              role: "admin"
+      responses:
+        "200":
+          description: "Текущая роль участника."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Member"
+              example:
+                team_id: 10
+                user_id: 2
+                role: "admin"
+        "400":
+          "$ref": "#/components/responses/InvalidBody"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/MemberNotFound"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge16KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+    delete:
+      tags:
+        - "Команды"
+      operationId: "removeTeamMember"
+      summary: "Удалить участника"
+      description: "Только owner/admin. Owner удалить нельзя. Назначенные задачи любого статуса блокируют удаление. Admin может удалить себя, если у него нет назначенных задач."
+      responses:
+        "204":
+          description: "Участник удалён; тело отсутствует."
+        "400":
+          "$ref": "#/components/responses/InvalidInput"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/MemberNotFound"
+        "409":
+          "$ref": "#/components/responses/AssignedTasks"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/tasks":
+    get:
+      tags:
+        - "Задачи"
+      operationId: "listTasks"
+      summary: "Список задач команды"
+      parameters:
+        - "$ref": "#/components/parameters/TeamQueryID"
+        - "$ref": "#/components/parameters/StatusFilter"
+        - "$ref": "#/components/parameters/AssigneeFilter"
+        - "$ref": "#/components/parameters/Limit"
+        - "$ref": "#/components/parameters/Offset"
+      description: "Для всех участников команды. Порядок: created_at DESC, id DESC. Неизвестные, повторяющиеся и пустые query-параметры отклоняются. Списки кешируются на 5 минут; текущее членство проверяется по MySQL и при попадании в кеш."
+      responses:
+        "200":
+          description: "Страница задач без обёртки и total; при отсутствии — []."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/Task"
+              example:
+                - id: 42
+                  team_id: 10
+                  title: "Проверить API"
+                  description: "Пройти основной сценарий"
+                  status: "todo"
+                  created_by: 1
+                  assignee_id: 2
+                  created_at: "2026-10-30T05:00:00Z"
+                  updated_at: "2026-10-30T05:00:00Z"
+                  closed_at: null
+                  version: 1
+        "400":
+          "$ref": "#/components/responses/InvalidInput"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/TeamNotFound"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+    post:
+      tags:
+        - "Задачи"
+      operationId: "createTask"
+      summary: "Создать задачу"
+      description: "Любой участник команды. Максимум один исполнитель, из этой же команды. Задача и начальная история создаются атомарно; кеш команды инвалидируется после изменения. Для done сразу устанавливается closed_at."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 512 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/CreateTaskRequest"
+            example:
+              team_id: 10
+              title: "Проверить API"
+              description: "Пройти основной сценарий"
+              status: "todo"
+              assignee_id: 2
+      responses:
+        "201":
+          description: "Задача создана; version равна 1."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Task"
+              example:
+                id: 42
+                team_id: 10
+                title: "Проверить API"
+                description: "Пройти основной сценарий"
+                status: "todo"
+                created_by: 1
+                assignee_id: 2
+                created_at: "2026-10-30T05:00:00Z"
+                updated_at: "2026-10-30T05:00:00Z"
+                closed_at: null
+                version: 1
+        "400":
+          "$ref": "#/components/responses/InvalidTaskBody"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/TeamNotFound"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge512KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/tasks/{id}":
+    parameters:
+      - "$ref": "#/components/parameters/TaskPathID"
+    put:
+      tags:
+        - "Задачи"
+      operationId: "updateTask"
+      summary: "Обновить задачу"
+      description: "Owner/admin и создатель могут менять все редактируемые поля. Исполнитель, если он не создатель, может менять только статус: остальные значения нужно передать без изменений с учётом нормализации title. Переходы между статусами не ограничены. Версия проверяется по актуальной задаче; задача и история обновляются атомарно. Переход в done задаёт closed_at, выход сбрасывает его. No-op проверяет доступ и версию, но не повышает version и не добавляет историю. После изменения инвалидируется кеш команды."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 512 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/UpdateTaskRequest"
+            example:
+              title: "Проверить API"
+              description: "Пройти основной сценарий"
+              status: "done"
+              assignee_id: 2
+              version: 1
+      responses:
+        "200":
+          description: "Актуальная задача после операции."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Task"
+              example:
+                id: 42
+                team_id: 10
+                title: "Проверить API"
+                description: "Пройти основной сценарий"
+                status: "done"
+                created_by: 1
+                assignee_id: 2
+                created_at: "2026-10-30T05:00:00Z"
+                updated_at: "2026-10-30T05:10:00Z"
+                closed_at: "2026-10-30T05:10:00Z"
+                version: 2
+        "400":
+          "$ref": "#/components/responses/InvalidTaskBody"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/TaskNotFound"
+        "409":
+          "$ref": "#/components/responses/VersionConflict"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge512KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/tasks/{id}/history":
+    parameters:
+      - "$ref": "#/components/parameters/TaskPathID"
+    get:
+      tags:
+        - "История"
+      operationId: "listTaskHistory"
+      summary: "История задачи"
+      parameters:
+        - "$ref": "#/components/parameters/Limit"
+        - "$ref": "#/components/parameters/Offset"
+      description: "Для всех текущих участников команды задачи. Порядок: created_at ASC, id ASC. История содержит автора, время и old/new. Неизвестные, повторяющиеся и пустые query-параметры отклоняются."
+      responses:
+        "200":
+          description: "Массив записей истории, при отсутствии — []."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/HistoryEntry"
+              example:
+                - id: 101
+                  task_id: 42
+                  changed_by: 1
+                  changes:
+                    status:
+                      old: "todo"
+                      new: "done"
+                    closed_at:
+                      old: null
+                      new: "2026-10-30T05:10:00Z"
+                    updated_at:
+                      old: "2026-10-30T05:00:00Z"
+                      new: "2026-10-30T05:10:00Z"
+                    version:
+                      old: 1
+                      new: 2
+                  created_at: "2026-10-30T05:10:00Z"
+        "400":
+          "$ref": "#/components/responses/InvalidInput"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/TaskNotFound"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/tasks/{id}/comments":
+    parameters:
+      - "$ref": "#/components/parameters/TaskPathID"
+    get:
+      tags:
+        - "Комментарии"
+      operationId: "listTaskComments"
+      summary: "Комментарии задачи"
+      parameters:
+        - "$ref": "#/components/parameters/Limit"
+        - "$ref": "#/components/parameters/Offset"
+      description: "Для всех текущих участников команды задачи. Порядок: created_at ASC, id ASC. Неизвестные, повторяющиеся и пустые query-параметры отклоняются."
+      responses:
+        "200":
+          description: "Массив комментариев, при отсутствии — []."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/Comment"
+              example: []
+        "400":
+          "$ref": "#/components/responses/InvalidInput"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/TaskNotFound"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+    post:
+      tags:
+        - "Комментарии"
+      operationId: "createTaskComment"
+      summary: "Добавить комментарий"
+      description: "Любой участник команды может комментировать любую её задачу, в том числе done. Комментарий не меняет задачу, version и историю. Редактирование и удаление комментариев не реализованы."
+      requestBody:
+        required: true
+        description: "Одно JSON-значение без неизвестных полей. Лимит тела — 512 КиБ."
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/CreateCommentRequest"
+            example:
+              content: "Проверка завершена"
+      responses:
+        "201":
+          description: "Комментарий создан."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Comment"
+              example:
+                id: 200
+                task_id: 42
+                user_id: 2
+                content: "Проверка завершена"
+                created_at: "2026-10-30T05:11:00Z"
+        "400":
+          "$ref": "#/components/responses/InvalidBody"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/TaskNotFound"
+        "413":
+          "$ref": "#/components/responses/BodyTooLarge512KiB"
+        "415":
+          "$ref": "#/components/responses/UnsupportedMediaType"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+  "/api/v1/teams/{team_id}/stats":
+    parameters:
+      - "$ref": "#/components/parameters/TeamStatsPathID"
+    get:
+      tags:
+        - "Аналитика"
+      operationId: "getTeamStats"
+      summary: "SQL-отчёт по команде"
+      description: "Только owner/admin конкретной команды. Счётчики и среднее время закрытия — за всё время; топ-3 — по closed_at за последние 30 дней. Query-параметры игнорируются."
+      responses:
+        "200":
+          description: "Отчёт по выбранной команде."
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/NoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/TeamStats"
+              example:
+                team_id: 10
+                tasks_by_status:
+                  todo: 0
+                  in_progress: 0
+                  done: 1
+                top_assignees:
+                  - user_id: 2
+                    name: "Участник"
+                    closed_tasks: 1
+                average_close_time_seconds: 600
+                comments_count: 1
+        "400":
+          "$ref": "#/components/responses/InvalidInput"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "404":
+          "$ref": "#/components/responses/TeamNotFound"
+        "500":
+          "$ref": "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    BearerAuth:
+      type: "http"
+      scheme: "bearer"
+      bearerFormat: "JWT"
+      description: "Один заголовок Authorization: Bearer <JWT>. Проверяются подпись HS256, exp, issuer, audience, issued-at и положительный user ID в sub. Права определяются текущим членством в MySQL."
+  headers:
+    NoStore:
+      description: "JSON-ответы API не должны кешироваться клиентом или посредником."
+      schema:
+        type: "string"
+        enum:
+          - "no-store"
+    Authenticate:
+      description: "Схема аутентификации."
+      schema:
+        type: "string"
+        enum:
+          - "Bearer"
+  parameters:
+    TeamPathID:
+      name: "id"
+      in: "path"
+      required: true
+      description: "ID команды."
+      schema:
+        "$ref": "#/components/schemas/PositiveID"
+    TeamStatsPathID:
+      name: "team_id"
+      in: "path"
+      required: true
+      description: "ID команды."
+      schema:
+        "$ref": "#/components/schemas/PositiveID"
+    MemberPathID:
+      name: "user_id"
+      in: "path"
+      required: true
+      description: "ID участника команды."
+      schema:
+        "$ref": "#/components/schemas/PositiveID"
+    TaskPathID:
+      name: "id"
+      in: "path"
+      required: true
+      description: "ID задачи."
+      schema:
+        "$ref": "#/components/schemas/PositiveID"
+    TeamQueryID:
+      name: "team_id"
+      in: "query"
+      required: true
+      description: "Команда текущего пользователя. Одно непустое положительное целое."
+      schema:
+        "$ref": "#/components/schemas/PositiveID"
+    StatusFilter:
+      name: "status"
+      in: "query"
+      description: "Один непустой статус. При отсутствии параметра фильтр не применяется."
+      schema:
+        "$ref": "#/components/schemas/Status"
+    AssigneeFilter:
+      name: "assignee_id"
+      in: "query"
+      description: "Один положительный ID исполнителя. При отсутствии фильтр не применяется. null и 0 не поддерживаются; отдельного фильтра задач без исполнителя нет."
+      schema:
+        "$ref": "#/components/schemas/PositiveID"
+    Limit:
+      name: "limit"
+      in: "query"
+      description: "Одно непустое целое значение размера страницы."
+      schema:
+        type: "integer"
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: "offset"
+      in: "query"
+      description: "Одно непустое целое смещение, помещающееся в Go int на платформе сервера."
+      schema:
+        type: "integer"
+        minimum: 0
+        default: 0
+  responses:
+    InvalidInput:
+      description: "400 invalid_input: неверный ID, query-параметр или значение запроса. Сообщение зависит от операции."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+    InvalidBody:
+      description: "400 invalid_request при неверном JSON, неизвестном поле или неверном типе; invalid_input при нарушении правил значений."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "invalid_request"
+              message: "request body must be one JSON object with supported fields"
+    InvalidLoginBody:
+      description: "400 invalid_request: ошибка JSON, неизвестное поле или неверный тип поля. Неверные значения учётных данных дают 401."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "invalid_request"
+              message: "request body must be one JSON object with supported fields"
+    InvalidTaskBody:
+      description: "400 invalid_request при ошибке JSON; invalid_input при нарушении значений; invalid_assignee, если исполнитель равен 0 или не состоит в команде. В PUT неверный тип assignee_id даёт invalid_input."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "invalid_assignee"
+              message: "assignee must belong to team"
+    Unauthorized:
+      description: "401 unauthorized: отсутствующий, неверный или просроченный JWT. Токен проверяется до разбора параметров и тела запроса."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+        WWW-Authenticate:
+          "$ref": "#/components/headers/Authenticate"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "unauthorized"
+              message: "valid bearer token required"
+    InvalidCredentials:
+      description: "401 invalid_credentials: неверный email или пароль, включая отсутствующие, null и невалидные значения."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+        WWW-Authenticate:
+          "$ref": "#/components/headers/Authenticate"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "invalid_credentials"
+              message: "invalid email or password"
+    Forbidden:
+      description: "403 forbidden: текущий участник не имеет необходимых прав либо его роль не проходит проверку согласованности с владельцем команды."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "forbidden"
+              message: "insufficient permissions"
+    TeamNotFound:
+      description: "404 team_not_found: команда отсутствует или текущий пользователь не состоит в ней."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "team_not_found"
+              message: "team not found"
+    TaskNotFound:
+      description: "404 task_not_found: задача отсутствует либо скрыта от пользователя чужой команды."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "task_not_found"
+              message: "task not found"
+    InviteNotFound:
+      description: "404 team_not_found для отсутствующей или чужой команды; user_not_found, если приглашаемый пользователь не зарегистрирован."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+    MemberNotFound:
+      description: "404 team_not_found для отсутствующей или чужой команды; member_not_found, если целевой участник не найден."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+    EmailConflict:
+      description: "409 email_taken: email уже зарегистрирован."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "email_taken"
+              message: "email already registered"
+    MemberConflict:
+      description: "409 already_member: пользователь уже состоит в команде."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "already_member"
+              message: "user already belongs to team"
+    AssignedTasks:
+      description: "409 assigned_tasks: перед удалением участника нужно переназначить или снять назначение всех его задач, включая done."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "assigned_tasks"
+              message: "reassign member tasks before removal"
+    VersionConflict:
+      description: "409 version_conflict: версия устарела, условное обновление не удалось либо версия достигла предела uint64 при фактическом изменении."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "version_conflict"
+              message: "task version is outdated"
+    BodyTooLarge16KiB:
+      description: "413 body_too_large: превышен лимит тела 16 КиБ (16384 байта)."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "body_too_large"
+              message: "request body exceeds 16 KiB"
+    BodyTooLarge512KiB:
+      description: "413 body_too_large: превышен лимит тела 512 КиБ (524288 байт)."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "body_too_large"
+              message: "request body exceeds 512 KiB"
+    UnsupportedMediaType:
+      description: "415 unsupported_media_type: Content-Type отсутствует, некорректен или отличается от application/json. Параметры, например charset=utf-8, допускаются."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "unsupported_media_type"
+              message: "Content-Type must be application/json"
+    InternalError:
+      description: "500 internal_error: внутренняя ошибка; детали БД клиенту не возвращаются."
+      headers:
+        Cache-Control:
+          "$ref": "#/components/headers/NoStore"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "internal_error"
+              message: "internal server error"
+    RouterNotFound:
+      description: "Стандартный 404 для неизвестного URL, вне обработчиков API. Это text/plain, не ErrorResponse."
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+          example: "404 page not found\n"
+    MethodNotAllowed:
+      description: "405 для неподдерживаемого метода. Стандартный ServeMux отвечает Method Not Allowed; /healthz отвечает method not allowed, включая HEAD. Это text/plain, не ErrorResponse."
+      headers:
+        Allow:
+          description: "Допустимые методы для пути; у /healthz — GET."
+          schema:
+            type: "string"
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+          examples:
+            router:
+              value: "Method Not Allowed\n"
+            health:
+              value: "method not allowed\n"
+  schemas:
+    PositiveID:
+      type: "integer"
+      minimum: 1
+      maximum: 18446744073709551615
+      description: "Положительное целое uint64. В JSON передаётся числом, не строкой. Формат int64 не используется, поскольку описывает подписанный диапазон."
+    Version:
+      type: "integer"
+      minimum: 1
+      maximum: 18446744073709551615
+      description: "Версия задачи uint64. При создании равна 1; при фактическом изменении увеличивается на 1."
+    Status:
+      type: "string"
+      enum:
+        - "todo"
+        - "in_progress"
+        - "done"
+    Role:
+      type: "string"
+      enum:
+        - "owner"
+        - "admin"
+        - "member"
+    ErrorResponse:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "error"
+      properties:
+        error:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "code"
+            - "message"
+          properties:
+            code:
+              type: "string"
+              enum:
+                - "invalid_input"
+                - "invalid_request"
+                - "invalid_assignee"
+                - "unsupported_media_type"
+                - "body_too_large"
+                - "email_taken"
+                - "invalid_credentials"
+                - "unauthorized"
+                - "team_not_found"
+                - "member_not_found"
+                - "user_not_found"
+                - "forbidden"
+                - "already_member"
+                - "assigned_tasks"
+                - "task_not_found"
+                - "version_conflict"
+                - "internal_error"
+            message:
+              type: "string"
+              description: "Сообщение сервера на английском языке. Текст invalid_input зависит от причины; он может включать контекст операции."
+    Health:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "status"
+      properties:
+        status:
+          type: "string"
+          enum:
+            - "ok"
+    RegisterRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "email"
+        - "password"
+        - "name"
+      properties:
+        email:
+          type: "string"
+          description: "После удаления окружающих пробелов и приведения к нижнему регистру: одиночный корректный ASCII email без пробелов, не более 255 байт. Проверяется через net/mail; display name не допускается."
+          example: "demo@example.test"
+        password:
+          type: "string"
+          writeOnly: true
+          minLength: 8
+          description: "Валидный UTF-8: не менее 8 Unicode-символов и не более 72 байт. Пробелы пароля не удаляются."
+          example: "DemoOnly-Password-123"
+        name:
+          type: "string"
+          description: "Валидный UTF-8, от 1 до 255 Unicode-символов после удаления окружающих пробелов."
+          example: "Тестовый пользователь"
+    LoginRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "email"
+        - "password"
+      properties:
+        email:
+          type: "string"
+          description: "После удаления окружающих пробелов и приведения к нижнему регистру: одиночный корректный ASCII email без пробелов, не более 255 байт. Проверяется через net/mail; display name не допускается."
+        password:
+          type: "string"
+          writeOnly: true
+          description: "Пароль без удаления пробелов. Для успешного входа требуется валидный UTF-8, не менее 8 Unicode-символов и не более 72 байт."
+      description: "Оба поля нужны для успешного входа. Их отсутствие, null или неверные значения дают 401 invalid_credentials. Ошибка JSON-типа поля даёт 400 invalid_request."
+    User:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "email"
+        - "name"
+        - "created_at"
+      properties:
+        id:
+          "$ref": "#/components/schemas/PositiveID"
+        email:
+          type: "string"
+        name:
+          type: "string"
+        created_at:
+          type: "string"
+          format: "date-time"
+      description: "Публичные данные пользователя; пароль и его хеш не возвращаются."
+      example:
+        id: 1
+        email: "demo@example.test"
+        name: "Тестовый пользователь"
+        created_at: "2026-10-30T05:00:00Z"
+    TokenResponse:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "access_token"
+        - "token_type"
+        - "expires_in"
+      properties:
+        access_token:
+          type: "string"
+          description: "Подписанный JWT HS256. В примере <JWT> обозначает токен, полученный от сервера."
+        token_type:
+          type: "string"
+          enum:
+            - "Bearer"
+        expires_in:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          description: "Срок действия в секундах; определяется JWT_TTL."
+      example:
+        access_token: "<JWT>"
+        token_type: "Bearer"
+        expires_in: 3600
+    CreateTeamRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "name"
+      properties:
+        name:
+          type: "string"
+          description: "Валидный UTF-8, от 1 до 255 Unicode-символов после удаления окружающих пробелов."
+    InviteRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "email"
+      properties:
+        email:
+          type: "string"
+          description: "Email уже зарегистрированного пользователя. После удаления окружающих пробелов и приведения к нижнему регистру: одиночный корректный ASCII email без пробелов, не более 255 байт. Проверяется через net/mail; display name не допускается."
+    ChangeRoleRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "role"
+      properties:
+        role:
+          type: "string"
+          enum:
+            - "admin"
+            - "member"
+          description: "Передача owner не поддерживается; owner в запросе отклоняется с 400."
+    Team:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "name"
+        - "created_by"
+        - "created_at"
+      properties:
+        id:
+          "$ref": "#/components/schemas/PositiveID"
+        name:
+          type: "string"
+        created_by:
+          "$ref": "#/components/schemas/PositiveID"
+        created_at:
+          type: "string"
+          format: "date-time"
+      example:
+        id: 10
+        name: "Тестовая команда"
+        created_by: 1
+        created_at: "2026-10-30T05:00:00Z"
+    Member:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "team_id"
+        - "user_id"
+        - "role"
+      properties:
+        team_id:
+          "$ref": "#/components/schemas/PositiveID"
+        user_id:
+          "$ref": "#/components/schemas/PositiveID"
+        role:
+          "$ref": "#/components/schemas/Role"
+      example:
+        team_id: 10
+        user_id: 2
+        role: "member"
+    CreateTaskRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "team_id"
+        - "title"
+      properties:
+        team_id:
+          "$ref": "#/components/schemas/PositiveID"
+        title:
+          type: "string"
+          description: "Валидный UTF-8, от 1 до 255 Unicode-символов после удаления окружающих пробелов."
+        description:
+          type: "string"
+          nullable: true
+          default: ""
+          description: "Валидный UTF-8, не более 65535 байт. Пробелы сохраняются. Отсутствие поля или null трактуется как пустая строка."
+        status:
+          type: "string"
+          nullable: true
+          enum:
+            - "todo"
+            - "in_progress"
+            - "done"
+            - ""
+            - null
+          default: "todo"
+          description: "Отсутствие поля, null или пустая строка дают todo."
+        assignee_id:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+          nullable: true
+          description: "Один исполнитель из команды задачи. Отсутствие поля или null означает отсутствие исполнителя; 0 недопустим."
+    UpdateTaskRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "title"
+        - "description"
+        - "status"
+        - "assignee_id"
+        - "version"
+      properties:
+        title:
+          type: "string"
+          description: "Валидный UTF-8, от 1 до 255 Unicode-символов после удаления окружающих пробелов."
+        description:
+          type: "string"
+          description: "Обязательное поле: валидный UTF-8, не более 65535 байт. Пустая строка допустима; null недопустим."
+        status:
+          "$ref": "#/components/schemas/Status"
+        assignee_id:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+          nullable: true
+          description: "Обязательное поле. null снимает назначение; ID должен принадлежать участнику команды. 0 недопустим."
+        version:
+          "$ref": "#/components/schemas/Version"
+      description: "Требуются все пять полей; это не частичное обновление. title, description, status и version не допускают null. Серверные поля передавать нельзя."
+    Task:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "team_id"
+        - "title"
+        - "description"
+        - "status"
+        - "created_by"
+        - "assignee_id"
+        - "created_at"
+        - "updated_at"
+        - "closed_at"
+        - "version"
+      properties:
+        id:
+          "$ref": "#/components/schemas/PositiveID"
+        team_id:
+          "$ref": "#/components/schemas/PositiveID"
+        title:
+          type: "string"
+        description:
+          type: "string"
+        status:
+          "$ref": "#/components/schemas/Status"
+        created_by:
+          "$ref": "#/components/schemas/PositiveID"
+        assignee_id:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+          nullable: true
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+        closed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        version:
+          "$ref": "#/components/schemas/Version"
+      description: "created_by определяется текущим пользователем. closed_at задаётся при переходе в done и сбрасывается при выходе из done. Nullable-поля всегда присутствуют в JSON."
+      example:
+        id: 42
+        team_id: 10
+        title: "Проверить API"
+        description: "Пройти основной сценарий"
+        status: "todo"
+        created_by: 1
+        assignee_id: 2
+        created_at: "2026-10-30T05:00:00Z"
+        updated_at: "2026-10-30T05:00:00Z"
+        closed_at: null
+        version: 1
+    StringChange:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "old"
+        - "new"
+      properties:
+        old:
+          type: "string"
+          nullable: true
+        new:
+          type: "string"
+    StatusChange:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "old"
+        - "new"
+      properties:
+        old:
+          type: "string"
+          nullable: true
+          enum:
+            - "todo"
+            - "in_progress"
+            - "done"
+            - null
+        new:
+          "$ref": "#/components/schemas/Status"
+    IDChange:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "old"
+        - "new"
+      properties:
+        old:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+          nullable: true
+        new:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+    NullableIDChange:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "old"
+        - "new"
+      properties:
+        old:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+          nullable: true
+        new:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+          nullable: true
+    DateTimeChange:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "old"
+        - "new"
+      properties:
+        old:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        new:
+          type: "string"
+          format: "date-time"
+    NullableDateTimeChange:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "old"
+        - "new"
+      properties:
+        old:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        new:
+          type: "string"
+          format: "date-time"
+          nullable: true
+    TaskChanges:
+      type: "object"
+      additionalProperties: false
+      description: "Словарь old/new. При создании содержит все 11 полей задачи, у каждого old равен null. При обновлении содержит только изменённые поля и обязательные для фактического изменения updated_at/version. Неизменённые поля отсутствуют."
+      properties:
+        id:
+          "$ref": "#/components/schemas/IDChange"
+        team_id:
+          "$ref": "#/components/schemas/IDChange"
+        title:
+          "$ref": "#/components/schemas/StringChange"
+        description:
+          "$ref": "#/components/schemas/StringChange"
+        status:
+          "$ref": "#/components/schemas/StatusChange"
+        created_by:
+          "$ref": "#/components/schemas/IDChange"
+        assignee_id:
+          "$ref": "#/components/schemas/NullableIDChange"
+        created_at:
+          "$ref": "#/components/schemas/DateTimeChange"
+        updated_at:
+          "$ref": "#/components/schemas/DateTimeChange"
+        closed_at:
+          "$ref": "#/components/schemas/NullableDateTimeChange"
+        version:
+          "$ref": "#/components/schemas/IDChange"
+    HistoryEntry:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "task_id"
+        - "changed_by"
+        - "changes"
+        - "created_at"
+      properties:
+        id:
+          "$ref": "#/components/schemas/PositiveID"
+        task_id:
+          "$ref": "#/components/schemas/PositiveID"
+        changed_by:
+          "$ref": "#/components/schemas/PositiveID"
+        changes:
+          "$ref": "#/components/schemas/TaskChanges"
+        created_at:
+          type: "string"
+          format: "date-time"
+    CreateCommentRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "content"
+      properties:
+        content:
+          type: "string"
+          description: "Валидный UTF-8, от 1 до 10000 Unicode-символов после удаления окружающих пробелов."
+    Comment:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "task_id"
+        - "user_id"
+        - "content"
+        - "created_at"
+      properties:
+        id:
+          "$ref": "#/components/schemas/PositiveID"
+        task_id:
+          "$ref": "#/components/schemas/PositiveID"
+        user_id:
+          "$ref": "#/components/schemas/PositiveID"
+        content:
+          type: "string"
+        created_at:
+          type: "string"
+          format: "date-time"
+    TaskCounts:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "todo"
+        - "in_progress"
+        - "done"
+      properties:
+        todo:
+          type: "integer"
+          minimum: 0
+          maximum: 18446744073709551615
+        in_progress:
+          type: "integer"
+          minimum: 0
+          maximum: 18446744073709551615
+        done:
+          type: "integer"
+          minimum: 0
+          maximum: 18446744073709551615
+    AssigneeStats:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "user_id"
+        - "name"
+        - "closed_tasks"
+      properties:
+        user_id:
+          "$ref": "#/components/schemas/PositiveID"
+        name:
+          type: "string"
+        closed_tasks:
+          type: "integer"
+          minimum: 1
+          maximum: 18446744073709551615
+    TeamStats:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "team_id"
+        - "tasks_by_status"
+        - "top_assignees"
+        - "average_close_time_seconds"
+        - "comments_count"
+      properties:
+        team_id:
+          "$ref": "#/components/schemas/PositiveID"
+        tasks_by_status:
+          "$ref": "#/components/schemas/TaskCounts"
+        top_assignees:
+          type: "array"
+          maxItems: 3
+          items:
+            "$ref": "#/components/schemas/AssigneeStats"
+          description: "Задачи done с текущим исполнителем и closed_at в пределах последних 30 дней включительно, без будущих дат. Порядок: closed_tasks DESC, user_id ASC. При отсутствии результатов — []."
+        average_close_time_seconds:
+          type: "number"
+          format: "double"
+          nullable: true
+          description: "Средняя разница closed_at и created_at для done с ненулевым closed_at за всё время, в секундах с дробной частью. null, если таких задач нет."
+        comments_count:
+          type: "integer"
+          minimum: 0
+          maximum: 18446744073709551615
+      description: "Все показатели ограничены командой. Счётчики задач и комментариев относятся ко всему времени."
